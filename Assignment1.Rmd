@@ -1,0 +1,149 @@
+---
+title: "Assignment1"
+author: "jp4711"
+date: "September 20, 2014"
+output: html_document
+---
+
+
+##Practical Machine Learning Course Project
+
+###Introduction (Background)
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal is  to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here:  [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har).
+
+### Loading Data
+```{r, eval=FALSE}
+# download data from internet if not on disk
+if (!file.exists("./pml-training.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+        destfile = "./pml-training.csv")
+}
+if (!file.exists("./pml-testing.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+        destfile = "./pml-testing.csv")
+}
+# load trainig set
+training <- read.csv("pml-training.csv")
+# save full training set - used later with 10-fold CV
+fullTraining <- training
+```
+
+###Cleaninig and Preparing Data
+```{r, eval=FALSE}
+#  use colums in testing set - only those will be used for training model
+testingX <- read.csv("pml-testing.csv")
+testingX <- testingX[,colSums(is.na(testingX)) < nrow(testingX)]
+colNames <- names(testingX)
+
+# take all columns from testing set - exclude the id and first 9 columns and add 'classe'
+colNames = c(colNames[9:length(colNames)-1], "classe")
+training <- training[,colNames]
+dim(training)
+
+#class into factor
+training$classe <- factor(training$classe)
+trainingAll = training
+
+```
+
+###Split data into training and testing set
+```{r, eval=FALSE}
+library(caret)
+library(doMC)
+registerDoMC(cores = 2)
+
+#Partitioning the data into training and testing set: 70% training, 30% testing
+trainIdx <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+testing <- training[-trainIdx,]
+training <- training[trainIdx,]
+
+```
+
+##Train classifier and verify quality of trained models
+
+Several classifier were used for this data set. Steps and code for random forest and SVM are show below.
+
+### Train Random Forest Classifier
+```{r, eval=FALSE}
+library(randomForest)
+set.seed(5975)
+# train rf classifier using all independent variables and 2048 trees.
+rfMod <- randomForest(classe ~ ., data = training, ntree = 2048)
+
+# check variable importance
+rfVarImp <- varImp(rfMod, scale = FALSE)
+rfVarImp <- filterVarImp(x = training[, -ncol(training)], y = training$classe)
+#plot(rfVarImp, top = 20)
+
+# predict on testing and get confusion matrix
+rfPred <- predict(rfMod, testing)
+rfConf <- confusionMatrix(testing$classe, rfPred)
+rfAccurarcy <- rfConf$overall[1]
+
+```
+
+### Examining the trained Model
+
+Print the top 20 most important variables and accurarcy of model.
+
+```{r, eval=FALSE}
+plot(rfVarImp, top = 20)
+rfAccurarcy
+```
+
+The random forest classifier shows very good accurarcy (0.9940527). Let see if it can be improved with cross validation.
+
+### Use Cross Validtion to tune Model
+To tune model and avoid overofitting use 10-fold cross validation
+
+```{r,eval=FALSE}
+rfControl <- trainControl(method = "repeatedcv", number = 10, repeats = 10)
+rfCvMod <- train(classe ~ ., method="rf",  data=training, trControl = rfControl)
+
+rfCvPred <- predict(rfCvMod, testing)
+rfCvConf <- confusionMatrix(testing$classe, rfPred)
+rfAccurarcy <- rfCvConf$overall[1]
+rfAccurarcy
+
+```
+
+With 10-fold cross validation the accurary of random forest model is a little higher.
+
+## Train SVM Classifier
+The e1071 package with contains svm classifier is used. It also has build-in support for cross validation.
+
+```{r, eval=FALSE}
+
+library(e1071)
+set.seed(325)
+# fit svn model use tune.svm with 10-fold CV and grid search over gamma and cost
+# Note: this takes a long time 
+#controlf <- trainControl(method = "repeatedcv", number = 5, repeats = 2)
+##tuneCtrl <- tune.svm(classe ~ .,  data=training, gamma = 0.2)
+#svmMod <- svm(classe ~ .,  data=training, gamma = 0.2, trControl = controlf)
+#svmMod <- tune.svm(classe ~., data = training, gamma = 2^(-4:1), cost = 2^(2:4))
+
+# Result of Parameter tuning of ‘svm’:
+#- sampling method: 10-fold cross validation 
+#- best parameters:
+# gamma cost
+# 0.125   16
+#- best performance: 0.007789125 
+
+svmMod <- svm(classe ~ .,  data=training, gamma = 0.125, cost=16)
+summary(svmMod)
+svmPred <- predict(svmMod,testing)
+
+svmConf <- confusionMatrix(testing$classe, svmPred)
+svmAccurarcy <- svmConf$overall[1]
+
+svmAccurarcy 
+
+```
+
+The best SVM classifier (using radial kernel and grid search with 10-fold cross validation) is with cost of 16 and gamma of 0.125. It uses 7322 support vectors and has an accurarcy of 0.9925234.
+
+##Conclusion
+Several classifier work well on the given problem set. Cross validation improved both model used here slightly.
+
+
